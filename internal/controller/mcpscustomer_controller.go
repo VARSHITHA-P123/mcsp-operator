@@ -35,15 +35,15 @@ import (
 	mcspv1 "github.com/VARSHITHA-P123/mcsp-operator/api/v1"
 )
 
-// CustomerReconciler reconciles a Customer object
-type CustomerReconciler struct {
+// MCPSCustomerReconciler reconciles a MCPSCustomer object
+type MCPSCustomerReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=mcsp.mcsp.io,resources=customers,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=mcsp.mcsp.io,resources=customers/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=mcsp.mcsp.io,resources=customers/finalizers,verbs=update
+// +kubebuilder:rbac:groups=mcsp.mcsp.io,resources=mcpscustomers,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=mcsp.mcsp.io,resources=mcpscustomers/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=mcsp.mcsp.io,resources=mcpscustomers/finalizers,verbs=update
 // +kubebuilder:rbac:groups=core,resources=namespaces,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
@@ -54,28 +54,25 @@ type CustomerReconciler struct {
 // +kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=external-secrets.io,resources=externalsecrets,verbs=get;list;watch;create;update;patch;delete
 
-func (r *CustomerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *MCPSCustomerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-
-	// Step 1 — Get the Customer CR
-	customer := &mcspv1.Customer{}
-	err := r.Get(ctx, req.NamespacedName, customer)
+	// Step 1 — Get the MCPSCustomer CR
+	mcpsCustomer := &mcspv1.MCPSCustomer{}
+	err := r.Get(ctx, req.NamespacedName, mcpsCustomer)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			log.Info("Customer not found, might have been deleted")
+			log.Info("MCPSCustomer not found, might have been deleted")
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
 	}
 
-	customerName := customer.Spec.CustomerName
-	log.Info("Reconciling Customer", "customerName", customerName)
+	customerName := mcpsCustomer.Spec.CustomerName
+	log.Info("Reconciling MCPSCustomer", "customerName", customerName)
 
 	// Step 2 — Create RHACM Policy
-	// This tells RHACM to create the namespace
-	// with resource quotas and RBAC permissions
-	// RHACM handles namespace creation — not us!
+	// RHACM handles namespace creation, resource quotas and RBAC
 	rhacmPolicy := &unstructured.Unstructured{}
 	rhacmPolicy.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   "policy.open-cluster-management.io",
@@ -180,11 +177,11 @@ func (r *CustomerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			log.Error(err, "Failed to create RHACM policy")
 			return ctrl.Result{}, err
 		}
-		log.Info("RHACM Policy created — namespace will be provisioned by RHACM", "customer", customerName)
+		log.Info("RHACM Policy created", "customer", customerName)
 	}
 
-	// Step 2b — Create PlacementBinding for RHACM Policy
-	// This tells RHACM which cluster to apply the policy to
+	// Step 2b — Create PlacementBinding
+	// Tells RHACM which cluster to apply the policy to
 	placementBinding := &unstructured.Unstructured{}
 	placementBinding.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   "policy.open-cluster-management.io",
@@ -223,11 +220,11 @@ func (r *CustomerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			log.Error(err, "Failed to create PlacementBinding")
 			return ctrl.Result{}, err
 		}
-		log.Info("PlacementBinding created — RHACM will now enforce policy", "customer", customerName)
+		log.Info("PlacementBinding created", "customer", customerName)
 	}
 
-	// Step 3 — Create Certificate using Cert Manager
-	// Cert Manager handles TLS — not us!
+	// Step 3 — Create Certificate
+	// Cert Manager handles TLS provisioning
 	certificate := &unstructured.Unstructured{}
 	certificate.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   "cert-manager.io",
@@ -266,11 +263,11 @@ func (r *CustomerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			log.Error(err, "Failed to create Certificate")
 			return ctrl.Result{}, err
 		}
-		log.Info("Certificate created — Cert Manager will provision TLS", "customer", customerName)
+		log.Info("Certificate created", "customer", customerName)
 	}
 
 	// Step 4 — Create ExternalSecret
-	// External Secrets handles credential injection — not us!
+	// External Secrets handles credential injection
 	externalSecret := &unstructured.Unstructured{}
 	externalSecret.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   "external-secrets.io",
@@ -304,7 +301,6 @@ func (r *CustomerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 						map[string]interface{}{
 							"secretKey": "customerName",
 							"remoteRef": map[string]interface{}{
-								// TODO: Confirm secret naming convention with teammates
 								"key":      customerName + "-source-secret",
 								"property": "customerName",
 							},
@@ -332,11 +328,10 @@ func (r *CustomerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			log.Error(err, "Failed to create ExternalSecret")
 			return ctrl.Result{}, err
 		}
-		log.Info("ExternalSecret created — External Secrets will inject credentials", "customer", customerName)
+		log.Info("ExternalSecret created", "customer", customerName)
 	}
 
 	// Step 5 — Create Deployment
-	// Default replicas = 1
 	replicas := int32(1)
 	deployment := &appsv1.Deployment{}
 	err = r.Get(ctx, types.NamespacedName{
@@ -502,24 +497,23 @@ func (r *CustomerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 
 	// Step 8 — Update Status
-	customer.Status.Deployed = true
-	customer.Status.Message = fmt.Sprintf("Customer %s successfully deployed", customerName)
-	// TODO: Confirm URL format with teammates
-	customer.Status.URL = fmt.Sprintf("https://mcsp-app-%s.apps.zps-mcsp1.cp.fyre.ibm.com", customerName)
-	err = r.Status().Update(ctx, customer)
+	mcpsCustomer.Status.Deployed = true
+	mcpsCustomer.Status.Message = fmt.Sprintf("Customer %s successfully deployed", customerName)
+	mcpsCustomer.Status.URL = fmt.Sprintf("https://mcsp-app-%s.apps.zps-mcsp1.cp.fyre.ibm.com", customerName)
+	err = r.Status().Update(ctx, mcpsCustomer)
 	if err != nil {
-		log.Error(err, "Failed to update customer status")
+		log.Error(err, "Failed to update MCPSCustomer status")
 		return ctrl.Result{}, err
 	}
 
-	log.Info("Customer reconciled successfully", "customerName", customerName)
+	log.Info("MCPSCustomer reconciled successfully", "customerName", customerName)
 	return ctrl.Result{}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *CustomerReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *MCPSCustomerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&mcspv1.Customer{}).
-		Named("customer").
+		For(&mcspv1.MCPSCustomer{}).
+		Named("mcpscustomer").
 		Complete(r)
 }

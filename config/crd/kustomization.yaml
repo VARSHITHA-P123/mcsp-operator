@@ -3,6 +3,7 @@
 # It should be run by config/default
 resources:
 - bases/mcsp.mcsp.io_customers.yaml
+- bases/mcsp.mcsp.io_mcpscustomers.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

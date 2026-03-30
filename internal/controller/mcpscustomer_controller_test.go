@@ -30,7 +30,7 @@ import (
 	mcspv1 "github.com/VARSHITHA-P123/mcsp-operator/api/v1"
 )
 
-var _ = Describe("Customer Controller", func() {
+var _ = Describe("MCPSCustomer Controller", func() {
 	Context("When reconciling a resource", func() {
 		const resourceName = "test-resource"
 
@@ -40,13 +40,13 @@ var _ = Describe("Customer Controller", func() {
 			Name:      resourceName,
 			Namespace: "default", // TODO(user):Modify as needed
 		}
-		customer := &mcspv1.Customer{}
+		mcpscustomer := &mcspv1.MCPSCustomer{}
 
 		BeforeEach(func() {
-			By("creating the custom resource for the Kind Customer")
-			err := k8sClient.Get(ctx, typeNamespacedName, customer)
+			By("creating the custom resource for the Kind MCPSCustomer")
+			err := k8sClient.Get(ctx, typeNamespacedName, mcpscustomer)
 			if err != nil && errors.IsNotFound(err) {
-				resource := &mcspv1.Customer{
+				resource := &mcspv1.MCPSCustomer{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
 						Namespace: "default",
@@ -59,16 +59,16 @@ var _ = Describe("Customer Controller", func() {
 
 		AfterEach(func() {
 			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &mcspv1.Customer{}
+			resource := &mcspv1.MCPSCustomer{}
 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Cleanup the specific resource instance Customer")
+			By("Cleanup the specific resource instance MCPSCustomer")
 			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
 		})
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
-			controllerReconciler := &CustomerReconciler{
+			controllerReconciler := &MCPSCustomerReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 			}

@@ -22,6 +22,9 @@ resources:
 # default, aiding admins in cluster management. Those roles are
 # not used by the mcsp-operator itself. You can comment the following lines
 # if you do not want those helpers be installed with your Project.
+- mcpscustomer_admin_role.yaml
+- mcpscustomer_editor_role.yaml
+- mcpscustomer_viewer_role.yaml
 - customer_admin_role.yaml
 - customer_editor_role.yaml
 - customer_viewer_role.yaml

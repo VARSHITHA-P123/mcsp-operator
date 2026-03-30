@@ -20,4 +20,13 @@ resources:
   kind: Customer
   path: github.com/VARSHITHA-P123/mcsp-operator/api/v1
   version: v1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: mcsp.io
+  group: mcsp
+  kind: MCPSCustomer
+  path: github.com/VARSHITHA-P123/mcsp-operator/api/v1
+  version: v1
 version: "3"

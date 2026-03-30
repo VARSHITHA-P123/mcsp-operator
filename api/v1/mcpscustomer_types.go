@@ -18,17 +18,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// CustomerSpec defines the desired state of Customer.
-type CustomerSpec struct {
+// MCPSCustomerSpec defines the desired state of MCPSCustomer.
+type MCPSCustomerSpec struct {
 	// CustomerName is the name of the customer
-	// This comes from the UI form via Gin backend
 	CustomerName string `json:"customerName"`
-
-	// Example: Replicas, Tier, etc.
 }
 
-// CustomerStatus defines the observed state of Customer.
-type CustomerStatus struct {
+// MCPSCustomerStatus defines the observed state of MCPSCustomer.
+type MCPSCustomerStatus struct {
 	// Deployed indicates if the customer is deployed
 	Deployed bool `json:"deployed,omitempty"`
 
@@ -36,31 +33,30 @@ type CustomerStatus struct {
 	Message string `json:"message,omitempty"`
 
 	// URL is the live URL of the customer application
-	
 	URL string `json:"url,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 
-// Customer is the Schema for the customers API.
-type Customer struct {
+// MCPSCustomer is the Schema for the mcpscustomers API.
+type MCPSCustomer struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   CustomerSpec   `json:"spec,omitempty"`
-	Status CustomerStatus `json:"status,omitempty"`
+	Spec   MCPSCustomerSpec   `json:"spec,omitempty"`
+	Status MCPSCustomerStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// CustomerList contains a list of Customer.
-type CustomerList struct {
+// MCPSCustomerList contains a list of MCPSCustomer.
+type MCPSCustomerList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []Customer `json:"items"`
+	Items           []MCPSCustomer `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&Customer{}, &CustomerList{})
+	SchemeBuilder.Register(&MCPSCustomer{}, &MCPSCustomerList{})
 }
