@@ -1,24 +1,24 @@
 # MCSP Customer Onboarding Operator
 
-A Go operator built using Operator SDK that automates customer onboarding on Red Hat OpenShift. The operator acts as an orchestrator — it coordinates existing operators like RHACM, Cert Manager and External Secrets to provision complete isolated customer environments automatically by just applying one Customer CR to the cluster.
+A Go operator built using Operator SDK that automates customer onboarding on Red Hat OpenShift. The operator acts as an orchestrator — it coordinates existing operators like RHACM, Cert Manager and External Secrets to provision complete isolated customer environments automatically by just applying one MCPSCustomer CR to the cluster.
 
 ---
 
 ## What The Operator Does
 
-When a Customer CR is applied to the cluster the operator:
+When a MCPSCustomer CR is applied to the cluster the operator:
 
 - Creates an RHACM Policy and PlacementBinding → RHACM automatically provisions the namespace with resource quotas and RBAC permissions
 - Creates a Certificate → Cert Manager automatically provisions a TLS certificate for the customer URL
 - Creates an ExternalSecret → External Secrets automatically fetches and injects customer credentials into the namespace
 - Creates a Deployment, Service and Route → customer application is live at a unique HTTPS URL
-- Updates the Customer CR status with the live URL and deployment details
+- Updates the MCPSCustomer CR status with the live URL and deployment details
 
 ---
 
 ## Architecture
 ```
-Apply Customer CR
+Apply MCPSCustomer CR
         ↓
 Go Operator detects new CR
         ↓
@@ -52,14 +52,14 @@ Customer environment live!
 ```
 mcsp-operator/
 ├── api/v1/
-│   └── customer_types.go       → Customer CRD definition
+│   └── mcpscustomer_types.go       → MCPSCustomer CRD definition
 ├── internal/controller/
-│   └── customer_controller.go  → Reconcile logic
+│   └── mcpscustomer_controller.go  → Reconcile logic
 ├── config/
-│   ├── crd/                    → Generated CRD manifests
-│   └── rbac/                   → RBAC permissions
+│   ├── crd/                        → Generated CRD manifests
+│   └── rbac/                       → RBAC permissions
 └── cmd/
-    └── main.go                 → Operator entry point
+    └── main.go                     → Operator entry point
 ```
 
 ---
