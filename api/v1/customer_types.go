@@ -24,7 +24,6 @@ type CustomerSpec struct {
 	// This comes from the UI form via Gin backend
 	CustomerName string `json:"customerName"`
 
-	// TODO: Add more fields after confirming with teammates
 	// Example: Replicas, Tier, etc.
 }
 
@@ -37,7 +36,7 @@ type CustomerStatus struct {
 	Message string `json:"message,omitempty"`
 
 	// URL is the live URL of the customer application
-	// TODO: Confirm URL format with teammates
+	
 	URL string `json:"url,omitempty"`
 }
 

@@ -57,9 +57,6 @@ type CustomerReconciler struct {
 func (r *CustomerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	// TODO: Confirm with Gin backend teammate which namespace
-	// Customer CR will be created in
-	// Currently assuming: default namespace
 
 	// Step 1 — Get the Customer CR
 	customer := &mcspv1.Customer{}
@@ -340,7 +337,6 @@ func (r *CustomerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 	// Step 5 — Create Deployment
 	// Default replicas = 1
-	// TODO: Update when replicas field is added to CR
 	replicas := int32(1)
 	deployment := &appsv1.Deployment{}
 	err = r.Get(ctx, types.NamespacedName{
