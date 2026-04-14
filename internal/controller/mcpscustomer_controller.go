@@ -17,7 +17,9 @@ package controller
 import (
 	"context"
 	"fmt"
+	"time"
 
+	"github.com/go-logr/logr"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -30,9 +32,14 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	mcspv1 "github.com/VARSHITHA-P123/mcsp-operator/api/v1"
+)
+
+const (
+	customerFinalizerName = "mcsp.mcsp.io/finalizer"
 )
 
 // MCPSCustomerReconciler reconciles a MCPSCustomer object
@@ -71,6 +78,44 @@ func (r *MCPSCustomerReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	customerName := mcpsCustomer.Spec.CustomerName
 	log.Info("Reconciling MCPSCustomer", "customerName", customerName)
 
+	// Handle deletion with finalizer
+	if mcpsCustomer.ObjectMeta.DeletionTimestamp.IsZero() {
+		// CR is not being deleted, add finalizer if not present
+		if !controllerutil.ContainsFinalizer(mcpsCustomer, customerFinalizerName) {
+			log.Info("Adding finalizer to MCPSCustomer", "customerName", customerName)
+			controllerutil.AddFinalizer(mcpsCustomer, customerFinalizerName)
+			if err := r.Update(ctx, mcpsCustomer); err != nil {
+				log.Error(err, "Failed to add finalizer")
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{Requeue: true}, nil
+		}
+	} else {
+		// CR is being deleted
+		if controllerutil.ContainsFinalizer(mcpsCustomer, customerFinalizerName) {
+			log.Info("MCPSCustomer is being deleted, starting cleanup", "customerName", customerName)
+
+			// Perform cleanup
+			if err := r.cleanupCustomerResources(ctx, customerName, log); err != nil {
+				log.Error(err, "Failed to cleanup customer resources")
+				return ctrl.Result{RequeueAfter: 10 * time.Second}, err
+			}
+
+			// Remove finalizer to allow deletion
+			log.Info("Cleanup completed, removing finalizer", "customerName", customerName)
+			controllerutil.RemoveFinalizer(mcpsCustomer, customerFinalizerName)
+			if err := r.Update(ctx, mcpsCustomer); err != nil {
+				log.Error(err, "Failed to remove finalizer")
+				return ctrl.Result{}, err
+			}
+
+			log.Info("MCPSCustomer deletion completed", "customerName", customerName)
+			return ctrl.Result{}, nil
+		}
+		// Finalizer already removed, nothing to do
+		return ctrl.Result{}, nil
+	}
+
 	// Step 2 — Create RHACM Policy
 	// RHACM handles namespace creation, resource quotas and RBAC
 	rhacmPolicy := &unstructured.Unstructured{}
@@ -81,7 +126,7 @@ func (r *MCPSCustomerReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	})
 	err = r.Get(ctx, types.NamespacedName{
 		Name:      customerName + "-policy",
-		Namespace: "learning-workspace",
+		Namespace: "mcsp-platform", // ← CHANGED
 	}, rhacmPolicy)
 	if err != nil && errors.IsNotFound(err) {
 		rhacmPolicy = &unstructured.Unstructured{
@@ -90,7 +135,7 @@ func (r *MCPSCustomerReconciler) Reconcile(ctx context.Context, req ctrl.Request
 				"kind":       "Policy",
 				"metadata": map[string]interface{}{
 					"name":      customerName + "-policy",
-					"namespace": "learning-workspace",
+					"namespace": "mcsp-platform", // ← CHANGED
 				},
 				"spec": map[string]interface{}{
 					"remediationAction": "enforce",
@@ -148,7 +193,7 @@ func (r *MCPSCustomerReconciler) Reconcile(ctx context.Context, req ctrl.Request
 												"kind":       "RoleBinding",
 												"metadata": map[string]interface{}{
 													"name":      customerName + "-image-puller",
-													"namespace": "learning-workspace",
+													"namespace": "mcsp-platform", // ← CHANGED
 												},
 												"roleRef": map[string]interface{}{
 													"apiGroup": "rbac.authorization.k8s.io",
@@ -190,7 +235,7 @@ func (r *MCPSCustomerReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	})
 	err = r.Get(ctx, types.NamespacedName{
 		Name:      customerName + "-policy-binding",
-		Namespace: "learning-workspace",
+		Namespace: "mcsp-platform", // ← CHANGED
 	}, placementBinding)
 	if err != nil && errors.IsNotFound(err) {
 		placementBinding = &unstructured.Unstructured{
@@ -199,7 +244,7 @@ func (r *MCPSCustomerReconciler) Reconcile(ctx context.Context, req ctrl.Request
 				"kind":       "PlacementBinding",
 				"metadata": map[string]interface{}{
 					"name":      customerName + "-policy-binding",
-					"namespace": "learning-workspace",
+					"namespace": "mcsp-platform", // ← CHANGED
 				},
 				"placementRef": map[string]interface{}{
 					"name":     "mcsp-hello-world-placement",
@@ -251,7 +296,7 @@ func (r *MCPSCustomerReconciler) Reconcile(ctx context.Context, req ctrl.Request
 						"kind": "ClusterIssuer",
 					},
 					"dnsNames": []interface{}{
-						fmt.Sprintf("mcsp-app-%s.apps.zps-mcsp1.cp.fyre.ibm.com", customerName),
+						fmt.Sprintf("mcsp-app-%s.apps.zps-mcsp-cluster.cp.fyre.ibm.com", customerName), // ← CHANGED
 					},
 					"duration":    "2160h",
 					"renewBefore": "360h",
@@ -366,7 +411,7 @@ func (r *MCPSCustomerReconciler) Reconcile(ctx context.Context, req ctrl.Request
 						Containers: []corev1.Container{
 							{
 								Name:  "mcsp-app",
-								Image: "image-registry.openshift-image-registry.svc:5000/learning-workspace/mcsp-hello-world:latest",
+								Image: "image-registry.openshift-image-registry.svc:5000/mcsp-platform/mcsp-hello-world:latest", // ← CHANGED
 								Ports: []corev1.ContainerPort{
 									{
 										ContainerPort: 8080,
@@ -499,7 +544,7 @@ func (r *MCPSCustomerReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// Step 8 — Update Status
 	mcpsCustomer.Status.Deployed = true
 	mcpsCustomer.Status.Message = fmt.Sprintf("Customer %s successfully deployed", customerName)
-	mcpsCustomer.Status.URL = fmt.Sprintf("https://mcsp-app-%s.apps.zps-mcsp1.cp.fyre.ibm.com", customerName)
+	mcpsCustomer.Status.URL = fmt.Sprintf("https://mcsp-app-%s.apps.zps-mcsp-cluster.cp.fyre.ibm.com", customerName) // ← CHANGED
 	err = r.Status().Update(ctx, mcpsCustomer)
 	if err != nil {
 		log.Error(err, "Failed to update MCPSCustomer status")
@@ -508,6 +553,137 @@ func (r *MCPSCustomerReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	log.Info("MCPSCustomer reconciled successfully", "customerName", customerName)
 	return ctrl.Result{}, nil
+}
+
+// cleanupCustomerResources performs cleanup of all resources created for a customer
+func (r *MCPSCustomerReconciler) cleanupCustomerResources(ctx context.Context, customerName string, log logr.Logger) error {
+	log.Info("Starting cleanup for customer", "customerName", customerName)
+
+	// Step 1: Delete Route
+	route := &unstructured.Unstructured{}
+	route.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "route.openshift.io",
+		Version: "v1",
+		Kind:    "Route",
+	})
+	err := r.Get(ctx, types.NamespacedName{Name: "mcsp-app", Namespace: customerName}, route)
+	if err == nil {
+		if err := r.Delete(ctx, route); err != nil && !errors.IsNotFound(err) {
+			log.Error(err, "Failed to delete Route")
+			return err
+		}
+		log.Info("Route deleted", "customerName", customerName)
+	}
+
+	// Step 2: Delete Service
+	service := &corev1.Service{}
+	err = r.Get(ctx, types.NamespacedName{Name: "mcsp-app", Namespace: customerName}, service)
+	if err == nil {
+		if err := r.Delete(ctx, service); err != nil && !errors.IsNotFound(err) {
+			log.Error(err, "Failed to delete Service")
+			return err
+		}
+		log.Info("Service deleted", "customerName", customerName)
+	}
+
+	// Step 3: Delete Deployment
+	deployment := &appsv1.Deployment{}
+	err = r.Get(ctx, types.NamespacedName{Name: "mcsp-app", Namespace: customerName}, deployment)
+	if err == nil {
+		if err := r.Delete(ctx, deployment); err != nil && !errors.IsNotFound(err) {
+			log.Error(err, "Failed to delete Deployment")
+			return err
+		}
+		log.Info("Deployment deleted", "customerName", customerName)
+	}
+
+	// Step 4: Delete ExternalSecret
+	externalSecret := &unstructured.Unstructured{}
+	externalSecret.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "external-secrets.io",
+		Version: "v1",
+		Kind:    "ExternalSecret",
+	})
+	err = r.Get(ctx, types.NamespacedName{Name: customerName + "-secrets", Namespace: customerName}, externalSecret)
+	if err == nil {
+		if err := r.Delete(ctx, externalSecret); err != nil && !errors.IsNotFound(err) {
+			log.Error(err, "Failed to delete ExternalSecret")
+			return err
+		}
+		log.Info("ExternalSecret deleted", "customerName", customerName)
+	}
+
+	// Step 5: Delete Certificate
+	certificate := &unstructured.Unstructured{}
+	certificate.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "cert-manager.io",
+		Version: "v1",
+		Kind:    "Certificate",
+	})
+	err = r.Get(ctx, types.NamespacedName{Name: customerName + "-tls", Namespace: customerName}, certificate)
+	if err == nil {
+		if err := r.Delete(ctx, certificate); err != nil && !errors.IsNotFound(err) {
+			log.Error(err, "Failed to delete Certificate")
+			return err
+		}
+		log.Info("Certificate deleted", "customerName", customerName)
+	}
+
+	// Step 6: Delete PlacementBinding
+	placementBinding := &unstructured.Unstructured{}
+	placementBinding.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "policy.open-cluster-management.io",
+		Version: "v1",
+		Kind:    "PlacementBinding",
+	})
+	err = r.Get(ctx, types.NamespacedName{Name: customerName + "-policy-binding", Namespace: "mcsp-platform"}, placementBinding) // ← CHANGED
+	if err == nil {
+		if err := r.Delete(ctx, placementBinding); err != nil && !errors.IsNotFound(err) {
+			log.Error(err, "Failed to delete PlacementBinding")
+			return err
+		}
+		log.Info("PlacementBinding deleted", "customerName", customerName)
+	}
+
+	// Step 7: Delete RHACM Policy
+	rhacmPolicy := &unstructured.Unstructured{}
+	rhacmPolicy.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "policy.open-cluster-management.io",
+		Version: "v1",
+		Kind:    "Policy",
+	})
+	err = r.Get(ctx, types.NamespacedName{Name: customerName + "-policy", Namespace: "mcsp-platform"}, rhacmPolicy) // ← CHANGED
+	if err == nil {
+		if err := r.Delete(ctx, rhacmPolicy); err != nil && !errors.IsNotFound(err) {
+			log.Error(err, "Failed to delete RHACM Policy")
+			return err
+		}
+		log.Info("RHACM Policy deleted", "customerName", customerName)
+	}
+
+	// Step 8: Delete Namespace (this will cascade delete remaining resources)
+	namespace := &corev1.Namespace{}
+	err = r.Get(ctx, types.NamespacedName{Name: customerName}, namespace)
+	if err == nil {
+		if err := r.Delete(ctx, namespace); err != nil && !errors.IsNotFound(err) {
+			log.Error(err, "Failed to delete Namespace")
+			return err
+		}
+		log.Info("Namespace deletion initiated", "customerName", customerName)
+
+		// Wait for namespace to be fully deleted (with timeout)
+		for i := 0; i < 30; i++ {
+			err = r.Get(ctx, types.NamespacedName{Name: customerName}, namespace)
+			if errors.IsNotFound(err) {
+				log.Info("Namespace fully deleted", "customerName", customerName)
+				break
+			}
+			time.Sleep(2 * time.Second)
+		}
+	}
+
+	log.Info("Cleanup completed successfully", "customerName", customerName)
+	return nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
