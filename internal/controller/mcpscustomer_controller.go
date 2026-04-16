@@ -28,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -337,7 +338,7 @@ func (r *MCPSCustomerReconciler) Reconcile(ctx context.Context, req ctrl.Request
 								Command: []string{"/bin/bash", "-c"},
 								Args: []string{
 									fmt.Sprintf(`
-										git clone https://$(GIT_TOKEN)@github.ibm.com/Manzanita/zps-mcsp-deploy.git -b mcsp-demo /tmp/deploy &&
+										git clone https://$(GIT_TOKEN)@github.ibm.com/Manzanita/zps-mcsp-deploy.git -b mcsp-demo-2 /tmp/deploy &&
 										cd /tmp/deploy &&
 										sh deploy.sh %s
 									`, customerName),
@@ -387,18 +388,127 @@ func (r *MCPSCustomerReconciler) Reconcile(ctx context.Context, req ctrl.Request
 func (r *MCPSCustomerReconciler) cleanupCustomerResources(ctx context.Context, customerName string, log logr.Logger) error {
 	log.Info("Starting cleanup for customer", "customerName", customerName)
 
-	// Step 1: Delete Job
-	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: customerName + "-deploy-job", Namespace: "mcsp-platform"}, job)
-	if err == nil {
-		if err := r.Delete(ctx, job); err != nil && !errors.IsNotFound(err) {
-			log.Error(err, "Failed to delete Job")
-			return err
+	// Step 1: Check if namespace exists and is not already terminating
+	namespace := &corev1.Namespace{}
+	err := r.Get(ctx, types.NamespacedName{Name: customerName}, namespace)
+	namespaceExists := err == nil
+	namespaceTerminating := namespaceExists && namespace.Status.Phase == corev1.NamespaceTerminating
+
+	// Step 2: Create cleanup job to delete resources inside namespace (only if namespace exists and not terminating)
+	if namespaceExists && !namespaceTerminating {
+		log.Info("Creating cleanup job to delete resources in namespace", "customerName", customerName)
+		
+		cleanupJob := &batchv1.Job{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      customerName + "-cleanup-job",
+				Namespace: "mcsp-platform",
+			},
+			Spec: batchv1.JobSpec{
+				Template: corev1.PodTemplateSpec{
+					Spec: corev1.PodSpec{
+						ServiceAccountName: "mcsp-operator-controller-manager",
+						RestartPolicy:      corev1.RestartPolicyNever,
+						Containers: []corev1.Container{
+							{
+								Name:  "cleanup",
+								Image: "registry.redhat.io/openshift4/ose-cli:latest",
+								Command: []string{
+									"/bin/bash",
+									"-c",
+									fmt.Sprintf(`
+										echo "Starting cleanup for namespace %s"
+										
+										# Delete all deployments
+										oc delete deployments --all -n %s --ignore-not-found=true --wait=false
+										
+										# Delete all statefulsets
+										oc delete statefulsets --all -n %s --ignore-not-found=true --wait=false
+										
+										# Delete all services
+										oc delete services --all -n %s --ignore-not-found=true --wait=false
+										
+										# Delete all configmaps (except kube-root-ca.crt and openshift-service-ca.crt)
+										oc delete configmaps --all -n %s --ignore-not-found=true --wait=false --field-selector metadata.name!=kube-root-ca.crt,metadata.name!=openshift-service-ca.crt
+										
+										# Delete all secrets (except default service account tokens)
+										oc delete secrets --all -n %s --ignore-not-found=true --wait=false --field-selector type!=kubernetes.io/service-account-token
+										
+										# Wait for pods to terminate
+										echo "Waiting for pods to terminate..."
+										for i in {1..30}; do
+											POD_COUNT=$(oc get pods -n %s --no-headers 2>/dev/null | wc -l)
+											if [ "$POD_COUNT" -eq "0" ]; then
+												echo "All pods terminated"
+												break
+											fi
+											echo "Waiting... $POD_COUNT pods remaining"
+											sleep 2
+										done
+										
+										echo "Cleanup job completed"
+									`, customerName, customerName, customerName, customerName, customerName, customerName, customerName),
+								},
+							},
+						},
+					},
+				},
+				BackoffLimit: ptr.To(int32(3)),
+			},
 		}
-		log.Info("Job deleted", "customerName", customerName)
+
+		// Try to create cleanup job
+		err = r.Get(ctx, types.NamespacedName{Name: customerName + "-cleanup-job", Namespace: "mcsp-platform"}, &batchv1.Job{})
+		if errors.IsNotFound(err) {
+			if err := r.Create(ctx, cleanupJob); err != nil {
+				log.Error(err, "Failed to create cleanup job, will proceed with namespace deletion anyway")
+			} else {
+				log.Info("Cleanup job created, waiting for completion", "customerName", customerName)
+				
+				// Wait for cleanup job to complete (max 2 minutes)
+				for i := 0; i < 60; i++ {
+					job := &batchv1.Job{}
+					err := r.Get(ctx, types.NamespacedName{Name: customerName + "-cleanup-job", Namespace: "mcsp-platform"}, job)
+					if err == nil {
+						if job.Status.Succeeded > 0 {
+							log.Info("Cleanup job completed successfully", "customerName", customerName)
+							break
+						}
+						if job.Status.Failed > 0 {
+							log.Info("Cleanup job failed, proceeding with namespace deletion", "customerName", customerName)
+							break
+						}
+					}
+					time.Sleep(2 * time.Second)
+				}
+			}
+		}
+	} else if namespaceTerminating {
+		log.Info("Namespace already terminating, skipping cleanup job creation", "customerName", customerName)
 	}
 
-	// Step 2: Delete PlacementBinding
+	// Step 3: Delete deployment job
+	job := &batchv1.Job{}
+	err = r.Get(ctx, types.NamespacedName{Name: customerName + "-deploy-job", Namespace: "mcsp-platform"}, job)
+	if err == nil {
+		if err := r.Delete(ctx, job); err != nil && !errors.IsNotFound(err) {
+			log.Error(err, "Failed to delete deployment job")
+		} else {
+			log.Info("Deployment job deleted", "customerName", customerName)
+		}
+	}
+
+	// Step 4: Delete cleanup job
+	cleanupJob := &batchv1.Job{}
+	err = r.Get(ctx, types.NamespacedName{Name: customerName + "-cleanup-job", Namespace: "mcsp-platform"}, cleanupJob)
+	if err == nil {
+		if err := r.Delete(ctx, cleanupJob); err != nil && !errors.IsNotFound(err) {
+			log.Error(err, "Failed to delete cleanup job")
+		} else {
+			log.Info("Cleanup job deleted", "customerName", customerName)
+		}
+	}
+
+	// Step 5: Delete PlacementBinding
 	placementBinding := &unstructured.Unstructured{}
 	placementBinding.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   "policy.open-cluster-management.io",
@@ -414,7 +524,7 @@ func (r *MCPSCustomerReconciler) cleanupCustomerResources(ctx context.Context, c
 		log.Info("PlacementBinding deleted", "customerName", customerName)
 	}
 
-	// Step 3: Delete RHACM Policy
+	// Step 6: Delete RHACM Policy
 	rhacmPolicy := &unstructured.Unstructured{}
 	rhacmPolicy.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   "policy.open-cluster-management.io",
@@ -430,8 +540,7 @@ func (r *MCPSCustomerReconciler) cleanupCustomerResources(ctx context.Context, c
 		log.Info("RHACM Policy deleted", "customerName", customerName)
 	}
 
-	// Step 4: Delete Namespace
-	namespace := &corev1.Namespace{}
+	// Step 7: Delete Namespace and wait for complete deletion
 	err = r.Get(ctx, types.NamespacedName{Name: customerName}, namespace)
 	if err == nil {
 		if err := r.Delete(ctx, namespace); err != nil && !errors.IsNotFound(err) {
@@ -440,13 +549,24 @@ func (r *MCPSCustomerReconciler) cleanupCustomerResources(ctx context.Context, c
 		}
 		log.Info("Namespace deletion initiated", "customerName", customerName)
 
-		for i := 0; i < 30; i++ {
+		// Wait for namespace to be fully deleted (max 5 minutes)
+		for i := 0; i < 150; i++ {
 			err = r.Get(ctx, types.NamespacedName{Name: customerName}, namespace)
 			if errors.IsNotFound(err) {
 				log.Info("Namespace fully deleted", "customerName", customerName)
 				break
 			}
+			if i%10 == 0 {
+				log.Info("Still waiting for namespace deletion", "customerName", customerName, "iteration", i)
+			}
 			time.Sleep(2 * time.Second)
+		}
+
+		// Final check
+		err = r.Get(ctx, types.NamespacedName{Name: customerName}, namespace)
+		if err == nil {
+			log.Error(fmt.Errorf("namespace still exists after timeout"), "Namespace deletion timed out", "customerName", customerName)
+			return fmt.Errorf("namespace %s deletion timed out after 5 minutes", customerName)
 		}
 	}
 

@@ -1,9 +1,0 @@
-apiVersion: mcsp.mcsp.io/v1
-kind: Customer
-metadata:
-  labels:
-    app.kubernetes.io/name: mcsp-operator
-    app.kubernetes.io/managed-by: kustomize
-  name: customer-sample
-spec:
-  # TODO(user): Add fields here

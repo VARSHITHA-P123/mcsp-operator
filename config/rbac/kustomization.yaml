@@ -25,7 +25,4 @@ resources:
 - mcpscustomer_admin_role.yaml
 - mcpscustomer_editor_role.yaml
 - mcpscustomer_viewer_role.yaml
-- customer_admin_role.yaml
-- customer_editor_role.yaml
-- customer_viewer_role.yaml
 
